@@ -70,9 +70,6 @@ export default function Home() {
         <title>Bingo</title>
         <link rel="icon" href="/favicon.ico" />
       </Head>
-      <div>
-        {connected ? 'connected' : 'connecting...'}
-      </div>
       <div className="">
         {
           showConfetti && <Confetti
