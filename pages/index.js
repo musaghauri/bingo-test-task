@@ -1,36 +1,108 @@
+import { useRouter } from 'next/dist/client/router';
 import Head from 'next/head'
 import React, { useEffect, useState } from 'react';
 import Confetti from 'react-confetti'
-import SocketIOClient from "socket.io-client";
+import useSocket from "../hooks/useSocket";
+
+import Modal from '@/components/Modal'
+import Board from '@/components/Board'
+import { generateArray, shuffleArray } from '../utils/helperFunctions';
+
+const roomId = "BINGO_GAME"
 
 export default function Home() {
-  const generateArray = (n) => [...Array(n + 1).keys()].slice(1)
-  const shuffleArray = (arr) => arr.sort(() => Math.random() - 0.5);
+  const socket = useSocket();
+  const router = useRouter()
+  const [lostMessage, setLostMessage] = useState("")
 
+  const [isTurn, setIsTurn] = useState(false)
+  const [showConfetti, setShowConfetti] = useState(false)
+  const [allowedValue, setAllowedValue] = useState('')
 
-  const [connected, setConnected] = useState(false);
-  // const [isTurn, setIsTurn] = useState(users.length === 0)
+  const [rivalEntries, setRivalEntries] = useState([])
+  const [rivalCheckBoxes, setRivalCheckBoxes] = useState(new Set())
+  const [username, setUsername] = useState(false)
+  const [oponenetUsername, setOponenetUsername] = useState("")
+  const [boardEntries, setBoardEntries] = useState(() => shuffleArray(generateArray(24)));
 
   useEffect(() => {
-    // connect to socket server
-    const socket = SocketIOClient.connect(process.env.BASE_URL, {
-      path: "/api/socketio",
-    });
+    if (socket && username) {
 
-    // log socket connection
-    socket.on("connect", () => {
-      console.log("SOCKET CONNECTED!", socket.id);
-      setConnected(true);
-    });
+      socket && socket.emit('joinRoom', { user: username, roomId }, () => {
+        socket.emit("rivalEntries", roomId, boardEntries)
+      });
+
+      socket.on('oponentLeft', () => {
+        setShowConfetti(true)
+      })
+
+      socket.on('pickedBox', (index) => {
+        setRivalCheckBoxes(previousBoxes => new Set([...previousBoxes, index]))
+      });
+
+      socket.on('setTurn', turn => setIsTurn(turn))
+
+      socket.on('allowedValue', value => {
+        setAllowedValue(value)
+        const indexOfSelectedBox = boardEntries.findIndex(val => val === value)
+        setCheckedBoxes(previousBoxes => new Set([...previousBoxes, indexOfSelectedBox]))
+      })
+
+      socket.on('redirect', () => {
+        window.alert('Room is Full')
+        router.push('/404')
+        return
+      })
+
+      socket.on('badLuck', () => {
+        setLostMessage("Good luck next time")
+      })
+
+      socket.on("users", (users) => {
+        if (users[0].user === username) {
+          setIsTurn(true)
+          setOponenetUsername(users[1]?.user)
+        } else {
+          setOponenetUsername(users[0]?.user)
+        }
+      });
+
+      socket.on('sendYourBoard', () => {
+        setShowConfetti(false)
+        socket.emit("rivalEntries", roomId, boardEntries)
+      })
+
+      socket.on("rivalEntries", (data) => {
+        setRivalEntries(data)
+      })
+
+      socket.on("rematch", () => {
+        setShowConfetti(false)
+        setRivalCheckBoxes(new Set())
+        setCheckedBoxes(new Set())
+        setBoardEntries(shuffleArray(generateArray(24)))
+      })
+    }
 
     // socket disconnet onUnmount if exists
-    if (socket) return () => socket.disconnect();
-  }, []);
+    if (socket && username) return () => {
+      socket.disconnect()
+    };
+  }, [socket, username]);
 
-  const [boardEntries, setBoardEntries] = useState(shuffleArray(generateArray(24)));
+  useEffect(() => {
+    socket && socket.emit("rivalEntries", roomId, boardEntries)
+  }, [boardEntries])
+
+  useEffect(() => {
+    if (showConfetti) {
+      setTimeout(() => {
+        setShowConfetti(false)
+      }, 5000)
+    }
+  }, [showConfetti])
+
   const [checkedBoxes, setCheckedBoxes] = useState(new Set())
-  const [showConfetti, setShowConfetti] = useState(false)
-
 
   const checkWin = () => {
     let winningOption = -1;
@@ -41,29 +113,42 @@ export default function Home() {
         setSquares = setSquares | Math.pow(2, i);
       }
     }
-    console.log({ setSquares })
     for (let i = 0; i < winners.length; i++) {
       if ((winners[i] & setSquares) === winners[i]) {
         winningOption = i;
         // break;
       }
     }
-    console.log({ winningOption })
-    if (winningOption > -1) setShowConfetti(true)
-
+    if (winningOption > -1) {
+      setShowConfetti(true)
+      socket && socket.emit("badLuck", roomId)
+    }
   };
 
-  const toggleColor = (index) => {
+  const pickBox = (index, value) => {
     setCheckedBoxes(previousBoxes => new Set([...previousBoxes, index]))
+    setAllowedValue("")
+    if (checkedBoxes.size + 1 > rivalCheckBoxes.size) {
+      socket.emit("setTurn", true)
+      setIsTurn(false)
+    }
+    value !== allowedValue ? socket.emit("allowedValue", value) : socket.emit("allowedValue", "")
+    socket.emit("pickedBox", roomId, index)
   }
-
 
   useEffect(() => {
     if ([...checkedBoxes].length >= 4) {
       checkWin()
     }
-  }, [checkedBoxes, checkWin])
-  
+  }, [checkedBoxes])
+
+  const handleRematch = () => {
+    setLostMessage("")
+    socket.emit("rematch")
+  }
+
+  const isBoxSelectable = (index) => (!checkedBoxes.has(index) && !showConfetti && isTurn) && rivalEntries.length > 0
+
   return (
     <div className="flex flex-col items-center justify-center min-h-screen py-2 bg-indigo-300">
       <Head>
@@ -77,31 +162,36 @@ export default function Home() {
             height={window.innerHeight}
           />
         }
-
-        <div className="flex">
-          <ul className="grid grid-cols-5 select-none">
-
-            {
-              boardEntries.map((value, i) => (
-                <React.Fragment key={value}>
-                  {i === 12 && (
-                    <li
-                      className="p-6 text-xl font-medium text-center bg-[#5dc4de] border-2 border-gray-300 border-solid">
-                      😀
-                    </li>
-                  )}
-                  <li
-                    onClick={() => !showConfetti ? toggleColor(i) : null}
-                    className={`p-6 text-xl font-medium text-center border-2 border-gray-300 border-solid ${checkedBoxes.has(i) ? 'bg-[#5dc4de] picked' : ''}`}
-                  >
-                    {value}
-                  </li>
-                </React.Fragment>
-              ))
-            }
-          </ul>
-
+        {
+          !username && <Modal setUsername={setUsername} />
+        }
+        {lostMessage && <p className="text-xl font-medium text-center text-indigo-600">{lostMessage}</p>}
+        <div className="flex space-x-4">
+          <Board
+            active={isTurn}
+            username={username || 'Me'}
+            boardCells={boardEntries}
+            checkedCells={checkedBoxes}
+            isBoxSelectable={isBoxSelectable}
+            pickBox={pickBox}
+          />
+          <Board
+            active={!isTurn}
+            username={oponenetUsername || 'Waiting for opponent...'}
+            boardCells={rivalEntries}
+            checkedCells={rivalCheckBoxes}
+            isBoxSelectable={false}
+            pickBox={pickBox}
+          />
         </div>
+        {
+          lostMessage && <button
+            onClick={handleRematch}
+            className="px-6 py-3 my-2 mr-1 text-sm font-bold text-white uppercase bg-green-500 rounded shadow outline-none active:bg-green-600 hover:shadow-lg focus:outline-none"
+          >
+            Rematch
+          </button>
+        }
       </div>
     </div >
   )
