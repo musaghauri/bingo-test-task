@@ -17,5 +17,5 @@ BASE_URL=
 
 ## Live Preview
 
-https://bingo-test-task.vercel.app/
+https://bingo-test-app.herokuapp.com/
 
