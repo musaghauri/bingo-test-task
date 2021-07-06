@@ -127,6 +127,8 @@ export default function Home() {
 
   const pickBox = (index, value) => {
     setCheckedBoxes(previousBoxes => new Set([...previousBoxes, index]))
+    const indexOfRivalBoard = rivalEntries.findIndex(val => val === value)
+    setRivalCheckBoxes(previousBoxes => new Set([...previousBoxes, indexOfRivalBoard]))
     setAllowedValue("")
     if (checkedBoxes.size + 1 > rivalCheckBoxes.size) {
       socket.emit("setTurn", true)
